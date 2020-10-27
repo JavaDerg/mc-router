@@ -1,0 +1,18 @@
+[package]
+name = "mc-router"
+version = "0.1.0"
+authors = ["post-rex <post-rex@pm.me>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = "0.6"
+flume = "0.9"
+mimalloc = { version = "0.1", default-features = false }
+notify = "4.0"
+tokio = { version = "0.3", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util"] }
+toml = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+slog = "2.5"
+sloggers = "1.0"
