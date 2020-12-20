@@ -1,0 +1,15 @@
+[[server]]
+name = "mc1.example.com"
+target = "127.0.0.1:25566"
+
+[[server]]
+name = "mc2.example.com"
+target = "127.0.0.1:25567"
+
+[[server]]
+name = "mc3.example.com"
+target = "127.0.0.1:25568"
+
+[[balancer]]
+name = "example.com"
+targets = ["mc1.example.com", "mc2.example.com", "mc4.example.com"]

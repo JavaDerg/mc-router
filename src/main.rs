@@ -1,206 +1,223 @@
-use bytes::{Buf, BufMut, BytesMut};
-use mimalloc::MiMalloc;
-use pretty_hex::PrettyHex;
+use hotwatch::Hotwatch;
+use serde::export::fmt::Write;
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::RwLock;
 
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-#[derive(Default)]
-struct VarInt(i32, u8);
-
-struct HandshakeFrame {
-	version: VarInt,
-	hostname_len: VarInt,
-	hostname: BytesMut,
-	port: Option<u16>,
-	next: VarInt,
-}
-
-#[derive(Debug)]
-struct Handshake {
-	version: i32,
-	hostname: String,
-	port: u16,
-	next: i32,
-}
-
-impl HandshakeFrame {
-	pub fn new() -> Self {
-		Self {
-			version: VarInt::new(),
-			hostname_len: VarInt::new(),
-			hostname: BytesMut::with_capacity(128),
-			port: None,
-			next: VarInt::new(),
-		}
-	}
-
-	pub fn read<B: Buf>(&mut self, buf: &mut B) -> Result<Option<Handshake>, ()> {
-		while buf.has_remaining() {
-			if !self.version.complete() {
-				if let Some(version) = self.version.read(buf)? {
-					if version < 28 {
-						// No hostname here
-						return Err(());
-					}
-				}
-				continue;
-			}
-			if !self.hostname_len.complete() {
-				if let Some(_) = self.hostname_len.read(buf)? {
-					// Sanity check
-				}
-				continue;
-			}
-			while self.hostname.len() < self.hostname_len.0 as usize {
-				if !buf.has_remaining() {
-					continue;
-				}
-				self.hostname.put_u8(buf.get_u8());
-				continue;
-			}
-			if let None = self.port {
-				if buf.remaining() < 2 {
-					break;
-				}
-				self.port = Some(buf.get_u16());
-				continue;
-			}
-			if !self.next.complete() {
-				if let Some(next) = self.next.read(buf)? {
-					match next {
-						1 | 2 => (),
-						_ => return Err(()),
-					}
-				}
-				continue;
-			}
-
-			return Ok(Some(todo!()));
-		}
-		Ok(None)
-	}
-}
-
-impl VarInt {
-	pub fn new() -> Self {
-		Self::default()
-	}
-
-	pub fn read<B: Buf>(&mut self, buf: &mut B) -> Result<Option<i32>, ()> {
-		while buf.has_remaining() && self.1 < 5 {
-			let read = buf.get_i8() as i8;
-			let (read, flag) = (read & 0b0111_1111, read >> 7 == 1);
-			self.0 |= (read as i32) << (7 * self.1);
-			if flag {
-				self.1 = 5;
-				return Ok(Some(self.0));
-			} else {
-				self.1 += 1;
-				if self.1 > 5 {
-					return Err(());
-				}
-			}
-		}
-		Ok(None)
-	}
-
-	#[inline]
-	pub fn complete(&self) -> bool {
-		self.1 >= 5
-	}
-}
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() {
-	let logger = create_logger();
-	slog::info!(
-		&logger,
-		concat!(
-			"McRouter v",
-			env!("CARGO_PKG_VERSION_MAJOR"),
-			".",
-			env!("CARGO_PKG_VERSION_MINOR")
-		)
-	);
+	let config_file = std::env::var("MCR_CONFIG_FILE").unwrap_or_else(|_| String::from("config.toml"));
+	let config_path = Path::new(&config_file);
+	let config = Arc::new(RwLock::new(Config {
+		server: Some(vec![]),
+		balancer: Some(vec![]),
+	}));
+	let router = Arc::new(RwLock::new(Router {
+		routes: Default::default(),
+	}));
 
-	let listener = tokio::net::TcpListener::bind("0.0.0.0:25565").await.unwrap();
-	while let Ok((mut client_stream, addr)) = listener.accept().await {
-		let logger = logger.clone();
-		tokio::spawn(async move {
-			slog::info!(&logger, "New connection: {}", addr);
+	if !config_path.exists() {
+		eprintln!("No config found, creating...");
+		crate_config(&config_path).await;
+	}
 
-			let mut client_bytes = bytes::BytesMut::with_capacity(512);
-			let mut frame = HandshakeFrame::new();
-			let handshake;
-			loop {
-				let read = client_stream.read_buf(&mut client_bytes).await.unwrap();
-				slog::info!(
-					&logger,
-					"[{}] Read: {}{:?}",
-					&addr,
-					read,
-					(&client_bytes[..read]).hex_dump()
-				);
-				match frame.read(&mut client_bytes) {
-					Ok(Some(hs)) => {
-						handshake = hs;
-						break;
-					}
-					Ok(None) => (),
-					Err(_) => {
-						slog::error!(&logger, "Protocol error {}", &addr);
-						return;
-					}
+	if let Err(err) = reload_config(config_path, &config, &router).await {
+		eprintln!("Failed to load config:\n{}", err);
+		std::process::exit(1);
+	}
+
+	let (tx, rx) = flume::bounded(16);
+
+	let maybe_hw = match Hotwatch::new() {
+		Ok(mut hw) => {
+			if let Err(err) = hw.watch(config_path, move |event| {
+				tx.send(event).unwrap();
+			}) {
+				eprintln!("Failed to watch config file, {}", err);
+				None
+			} else {
+				Some(hw)
+			}
+		}
+		Err(err) => {
+			eprintln!("Failed to start config watcher, {}", err);
+			None
+		}
+	};
+	while let Ok(de) = rx.recv_async().await {
+		if let hotwatch::notify::DebouncedEvent::Write(_) = de {
+			if let Err(err) = reload_config(config_path, &config, &router).await {
+				eprintln!("Failed to reload config: {}", err)
+			} else {
+				eprintln!("Config reloaded");
+			}
+		}
+	}
+	drop(maybe_hw);
+}
+
+async fn reload_config(
+	path: &Path,
+	config: &Arc<RwLock<Config>>,
+	router: &Arc<RwLock<Router>>,
+) -> Result<(), String> {
+	let new_cfg: Config = toml::from_slice(
+		tokio::fs::read(path)
+			.await
+			.map_err(|err| format!("{}", err))?
+			.as_slice(),
+	)
+	.map_err(|err| format!("{}", err))?;
+	let new_router = new_cfg.make_router()?;
+	Ok(())
+}
+
+async fn crate_config(path: &Path) {
+	tokio::fs::write(path, include_str!("default_config.toml"))
+		.await
+		.expect("Failed to create config file");
+}
+
+struct Router {
+	routes: HashMap<String, Route>,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+enum Route {
+	Direct {
+		origin: String,
+		target: SocketAddr,
+		private: bool,
+	},
+	Route {
+		origin: String,
+		target: Option<Vec<SocketAddr>>,
+		private: bool,
+	},
+}
+
+#[derive(serde::Deserialize)]
+struct Config {
+	server: Option<Vec<Server>>,
+	balancer: Option<Vec<Balancer>>,
+}
+
+#[derive(serde::Deserialize)]
+struct Server {
+	name: String,
+	target: SocketAddr,
+	aliases: Option<Vec<String>>,
+	private: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+struct Balancer {
+	name: String,
+	targets: Vec<String>,
+	aliases: Option<Vec<String>>,
+	public: Option<bool>,
+}
+
+impl Config {
+	pub fn make_router(&self) -> Result<Router, String> {
+		let mut routes = HashMap::new();
+		let mut conflicts = HashMap::<String, HashSet<Route>>::new();
+		if let Some(ref servers) = self.server {
+			for server in servers {
+				let mut names = vec![server.name.clone()];
+				if let Some(mut aliases) = server.aliases.clone() {
+					names.append(&mut aliases);
+				}
+				for name in names {
+					let new_route = server.route(&name);
+					check_and_insert(&mut routes, &mut conflicts, name, new_route);
 				}
 			}
-
-			slog::info!(&logger, "{:?}", &handshake);
-
-			// Select correct server
-
-			return;
-
-			let mut server_stream = tokio::net::TcpStream::connect("127.0.0.1:25566").await.unwrap();
-			server_stream.write_buf(&mut client_bytes).await.unwrap();
-
-			let mut server_bytes = bytes::BytesMut::with_capacity(512);
-
-			loop {
-				tokio::select! {
-					len = server_stream.read_buf(&mut server_bytes) => {
-						client_stream.write_buf(&mut server_bytes).await.unwrap();
-						match len {
-							Ok(len) if len == 0 => break,
-							Err(_) => break,
-							_ => ()
-						}
-					},
-					len = client_stream.read_buf(&mut client_bytes) => {
-						server_stream.write_buf(&mut client_bytes).await.unwrap();
-						match len {
-							Ok(len) if len == 0 => break,
-							Err(_) => break,
-							_ => ()
-						}
-					},
+		}
+		if let Some(ref balancers) = self.balancer {
+			for balancer in balancers {
+				let mut names = vec![balancer.name.clone()];
+				if let Some(mut aliases) = balancer.aliases.clone() {
+					names.append(&mut aliases);
+				}
+				for name in names {
+					let new_route = balancer.route(&name);
+					check_and_insert(&mut routes, &mut conflicts, name, new_route);
 				}
 			}
-		});
+		}
+		if !conflicts.is_empty() {
+			let mut buf = String::with_capacity(512);
+			buf.write_str(format!("Found {} conflicts:\n", conflicts.len()).as_str())
+				.unwrap();
+			for (k, v) in conflicts {
+				buf.write_str(format!("  {}: (Exists twice or more)\n", k).as_str())
+					.unwrap();
+				for route in v {
+					let (origin, target) = match route {
+						Route::Direct { origin, target, .. } => (origin, Some(target)),
+						Route::Route { origin, .. } => (origin, None),
+					};
+					buf.write_str(
+						format!(
+							"  . {} -> {}\n",
+							origin,
+							target
+								.map(|ipaddr| format!("{}", ipaddr))
+								.unwrap_or_else(|| String::from("(Resolved in next step)"))
+						)
+						.as_str(),
+					)
+					.unwrap();
+				}
+			}
+			return Err(buf);
+		}
+		Err(String::from("Failed to resolve all routes for the balancers"))
+		// Ok(Router { routes })
 	}
 }
 
-fn create_logger() -> slog::Logger {
-	use slog::info;
-	use sloggers::terminal::{Destination, TerminalLoggerBuilder};
-	use sloggers::types::Severity;
-	use sloggers::Build;
+impl Server {
+	pub fn route(&self, name: &str) -> Route {
+		Route::Direct {
+			origin: name.to_string(),
+			target: self.target,
+			private: self.private.unwrap_or(false),
+		}
+	}
+}
 
-	let mut builder = TerminalLoggerBuilder::new();
-	builder.level(Severity::Debug);
-	builder.destination(Destination::Stderr);
+impl Balancer {
+	pub fn route(&self, name: &str) -> Route {
+		Route::Route {
+			origin: name.to_string(),
+			target: None,
+			private: false,
+		}
+	}
+}
 
-	builder.build().unwrap()
+fn check_and_insert(
+	routes: &mut HashMap<String, Route>,
+	conflicts: &mut HashMap<String, HashSet<Route>>,
+	name: String,
+	new_route: Route,
+) {
+	if let Some(route) = routes.insert(name.clone(), new_route.clone()) {
+		if let Some(hs) = conflicts.get_mut(&name) {
+			let _ = hs.insert(route);
+			let _ = hs.insert(new_route);
+		} else {
+			let mut hs = HashSet::new();
+			let _ = hs.insert(route);
+			let _ = hs.insert(new_route);
+			conflicts.insert(name.clone(), hs);
+		}
+	}
 }

@@ -10,11 +10,7 @@ edition = "2018"
 bytes = "0.6"
 flume = "0.9"
 mimalloc = { version = "0.1", default-features = false }
-notify = "4.0"
-tokio = { version = "0.3", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util"] }
+hotwatch = "0.4.5"
+tokio = { version = "0.3", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util", "fs", "sync"] }
 toml = "0.5"
 serde = { version = "1.0", features = ["derive"] }
-slog = "2.5"
-sloggers = "1.0"
-
-pretty-hex = "0.2.1"
