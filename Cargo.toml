@@ -11,6 +11,6 @@ bytes = "0.6"
 flume = "0.9"
 mimalloc = { version = "0.1", default-features = false }
 hotwatch = "0.4.5"
-tokio = { version = "0.3", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util", "fs", "sync"] }
+tokio = { version = "0.3", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util", "fs", "sync", "time"] }
 toml = "0.5"
 serde = { version = "1.0", features = ["derive"] }
