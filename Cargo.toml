@@ -17,4 +17,4 @@ futures = "0.3"
 
 [[bin]]
 name = "mcpd"
-path = "src/bin/daemon.rs"
+path = "src/bin/daemon/main.rs"

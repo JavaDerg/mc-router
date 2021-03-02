@@ -5,6 +5,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::unix::WriteHalf;
 use tokio::net::UnixStream;
 use tokio_util::codec::{FramedRead, LinesCodec};
+use bytes::BufMut;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -73,7 +74,8 @@ async fn handle_controller(mut stream: UnixStream) {
 			}
 		};
 		tracing::info!("Received Packet; Parsed={:?}", ron);
-		if write_res(&mut write, process_packet(ron).await).await.is_err() {
+		if let Err(err) = write_res(&mut write, process_packet(ron).await).await {
+			tracing::error!("Unable to write response; State=Closing connection; Error={}", err);
 			return;
 		}
 	}
@@ -87,18 +89,14 @@ async fn process_packet(packet: cprot::Request) -> cprot::Response {
 }
 
 async fn write_res(wh: &mut WriteHalf<'_>, res: cprot::Response) -> tokio::io::Result<()> {
-	let out = wh
-		.write_all(
-			format!(
-				"{}\n",
-				ron::to_string(&res)
-					.expect("If you can read this, email <post-rex@pm.me> about hot glue + stacktrace")
-			)
-			.as_bytes(),
-		)
-		.await;
-	if out.is_err() {
-		tracing::error!("Unable to send packet; Error={}", out.as_ref().unwrap_err())
-	}
-	out
+	let ron = ron::to_string(&res)
+		.expect("If you can read this, email <post-rex@pm.me> about hot glue + stacktrace");
+	let ron = ron.as_bytes();
+
+	let mut buf = bytes::BytesMut::with_capacity(ron.len() + 1);
+	buf.put_slice(ron);
+	buf.put_u8(b'\n');
+	let buf = buf.freeze();
+
+	wh.write_all(buf.as_ref()).await
 }
