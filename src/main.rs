@@ -49,6 +49,6 @@ async fn handle_controller(mut stream: UnixStream) {
 	let (read, mut write) = stream.split();
 	let mut framed = FramedRead::new(read, LinesCodec::new());
 	while let Some(Ok(line)) = framed.next().await {
-		write.write_all(format!("{}\n", line).as_bytes()).await;
+		write.write_all(format!("{}\n", String::from_utf8(line.bytes().into_iter().rev().collect()).unwrap()).as_bytes()).await;
 	}
 }
