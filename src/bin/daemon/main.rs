@@ -1,3 +1,7 @@
+mod manager;
+mod proxy;
+
+use bytes::BufMut;
 use futures::StreamExt;
 use mc_router::{cprot, SOCKET_PATH};
 use std::path::Path;
@@ -5,7 +9,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::unix::WriteHalf;
 use tokio::net::UnixStream;
 use tokio_util::codec::{FramedRead, LinesCodec};
-use bytes::BufMut;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -75,7 +78,10 @@ async fn handle_controller(mut stream: UnixStream) {
 		};
 		tracing::info!("Received Packet; Parsed={:?}", ron);
 		if let Err(err) = write_res(&mut write, process_packet(ron).await).await {
-			tracing::error!("Unable to write response; State=Closing connection; Error={}", err);
+			tracing::error!(
+				"Unable to write response; State=Closing connection; Error={}",
+				err
+			);
 			return;
 		}
 	}
