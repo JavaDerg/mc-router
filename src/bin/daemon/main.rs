@@ -4,7 +4,9 @@ mod proxy;
 use bytes::BufMut;
 use futures::StreamExt;
 use mc_router::{cprot, SOCKET_PATH};
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::WriteHalf;
 use tokio::net::UnixStream;
@@ -16,7 +18,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() {
 	tracing_subscriber::fmt()
-		.with_max_level(tracing::Level::INFO)
+		.with_max_level(tracing::Level::TRACE)
 		.init();
 
 	let socket = Path::new(SOCKET_PATH);
@@ -31,6 +33,9 @@ async fn main() {
 			std::process::exit(1);
 		}
 	};
+
+	let manager = Arc::new(manager::Manager::new());
+	let _ = proxy::mk_listener(manager.clone(), "0.0.0.0:25565".parse().unwrap()).await;
 
 	loop {
 		let (socket, addr) = match listener.accept().await {

@@ -6,7 +6,7 @@ pub struct Listener(flume::Sender<ListenerRequest>, tokio::task::JoinHandle<()>)
 
 enum ListenerRequest {}
 
-pub async fn mk_listener<S>(manager: Arc<Manager>, addr: SocketAddr) -> tokio::io::Result<Listener> {
+pub async fn mk_listener(manager: Arc<Manager>, addr: SocketAddr) -> tokio::io::Result<Listener> {
 	let listener = tokio::net::TcpListener::bind(addr).await?;
 	let (rx, tx) = flume::bounded(16);
 	let handler = tokio::spawn(async move {
