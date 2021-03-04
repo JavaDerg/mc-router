@@ -183,27 +183,46 @@ pub async fn write_error(
 	if legacy {
 		todo!()
 	}
-	stream
-		.write_all(
-			serde_json::json!({
-				"version": {
-					"name": "",
-					"protocol": version
-				},
-				"players": {
-					"max": 0,
-					"online": err_code,
-					"sample": []
-				},
-				"description": {
-					"text": format!("§l§4{}", msg)
-				},
-				"favicon": include_str!("question.base64")
-			})
-			.to_string()
-			.as_bytes(),
-		)
-		.await
+	let payload = serde_json::json!({
+		"version": {
+			"name": "Mcprox",
+			"protocol": version
+		},
+		"players": {
+			"max": 0,
+			"online": err_code,
+			"sample": []
+		},
+		"description": {
+			"text": msg // format!("§l§4{}", msg)
+		},
+		"favicon": include_str!("question.base64")
+	})
+	.to_string();
+	let payload = payload.as_bytes();
+	let mut bytes = bytes::BytesMut::with_capacity(4);
+	write_varint_buf(&mut bytes, payload.len() as i32);
+	bytes.put_u8(0x00);
+	let header = bytes.freeze();
+	trace!("{:?}", header.as_ref());
+	stream.write_all(header.as_ref()).await;
+	stream.write_all(payload).await;
+	stream.flush().await;
+	Ok(())
+}
+
+pub fn write_varint_buf(buf: &mut bytes::BytesMut, mut int: i32) {
+	loop {
+		let mut tmp = (int & 0b0111_1111) as u8;
+		int >>= 7;
+		if int != 0 {
+			tmp |= 0b1000_0000;
+		}
+		buf.put_u8(tmp);
+		if int == 0 {
+			break;
+		}
+	}
 }
 
 pub async fn read_varint(stream: &mut tokio::net::TcpStream) -> tokio::io::Result<i32> {
