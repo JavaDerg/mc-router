@@ -18,7 +18,7 @@ impl<'a> PeekCursor<'a> {
 	pub async fn read(&mut self, len: usize) -> tokio::io::Result<Bytes> {
 		let mut buffer = vec![0u8; self.pos + len];
 		let read = self.stream.peek(buffer.as_mut()).await?;
-		(read..self.pos + len).for_each(|_| drop(buffer.pop()));
+		(read..self.pos + len).map(|_| buffer.pop()).for_each(drop);
 		let mut buf = Bytes::from(buffer);
 		buf.advance(self.pos);
 		self.pos += len;

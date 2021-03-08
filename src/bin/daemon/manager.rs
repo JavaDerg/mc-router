@@ -6,16 +6,15 @@ use std::sync::Weak;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+#[derive(Default)]
 pub struct Manager {
 	dict: RwLock<HashMap<Host, SocketAddr>>,
-	connections: RwLock<Host, Vec<Weak<ConnInfo>>>,
+	connections: RwLock<HashMap<Host, Vec<Weak<ConnInfo>>>>,
 }
 
 impl Manager {
 	pub fn new() -> Self {
-		Self {
-			dict: RwLock::default(),
-		}
+		Self::default()
 	}
 
 	pub async fn new_client(
