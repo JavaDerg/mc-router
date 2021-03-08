@@ -1,10 +1,14 @@
+use crate::prot::Host;
+use crate::proxy::ConnInfo;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Weak;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 pub struct Manager {
-	dict: RwLock<HashMap<crate::prot::Host, SocketAddr>>,
+	dict: RwLock<HashMap<Host, SocketAddr>>,
+	connections: RwLock<Host, Vec<Weak<ConnInfo>>>,
 }
 
 impl Manager {
@@ -34,13 +38,13 @@ impl Manager {
 			);
 			let target = self.get_socket_addr(&host).await;
 			match target {
-				Some(target) => {}
-				None => {
-					warn!(
-						"Unknown target; Target={}:{}; Peer={}; Local={}; State=Disconnecting",
-						&host.domain, &host.port, &peer, &local
-					);
+				Some(target) => {
+					tokio::spawn(crate::proxy::route(stream, target));
 				}
+				None => warn!(
+					"Unknown target; Target={}:{}; Peer={}; Local={}; State=Disconnecting",
+					&host.domain, &host.port, &peer, &local
+				),
 			}
 		});
 	}

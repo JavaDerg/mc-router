@@ -125,7 +125,7 @@ fn read_var_int_buf(buf: &mut bytes::Bytes) -> Option<i32> {
 			return None;
 		}
 		let byte = buf.get_u8();
-		result |= (byte as i32 & 0b0111_1111) << (i * 7);
+		result |= (byte as i32 & 0x7f) << (i * 7);
 		if byte >> 7 == 0 {
 			break;
 		}

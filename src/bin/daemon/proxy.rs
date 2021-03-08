@@ -3,6 +3,9 @@ use std::net::SocketAddr;
 
 pub struct Listener(flume::Sender<ListenerRequest>, tokio::task::JoinHandle<()>);
 
+#[derive(Hash, Eq, PartialEq)]
+pub struct ConnInfo {}
+
 enum ListenerRequest {}
 
 pub async fn mk_listener(manager: &'static Manager, addr: SocketAddr) -> tokio::io::Result<Listener> {
@@ -23,3 +26,5 @@ pub async fn mk_listener(manager: &'static Manager, addr: SocketAddr) -> tokio::
 
 	Ok(Listener(rx, handler))
 }
+
+pub async fn route(stream: tokio::net::TcpStream, target: SocketAddr) {}
