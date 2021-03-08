@@ -1,12 +1,11 @@
 use crate::manager::Manager;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 pub struct Listener(flume::Sender<ListenerRequest>, tokio::task::JoinHandle<()>);
 
 enum ListenerRequest {}
 
-pub async fn mk_listener(manager: Arc<Manager>, addr: SocketAddr) -> tokio::io::Result<Listener> {
+pub async fn mk_listener(manager: &'static Manager, addr: SocketAddr) -> tokio::io::Result<Listener> {
 	let listener = tokio::net::TcpListener::bind(addr).await?;
 	let (rx, tx) = flume::bounded(16);
 	let handler = tokio::spawn(async move {
@@ -18,8 +17,7 @@ pub async fn mk_listener(manager: Arc<Manager>, addr: SocketAddr) -> tokio::io::
 					continue;
 				}
 			};
-			tracing::info!("New connection; Local={}; Peer={}", &addr, peer_addr);
-			manager.new_client(addr, stream).await;
+			manager.new_client(addr, peer_addr, stream).await;
 		}
 	});
 

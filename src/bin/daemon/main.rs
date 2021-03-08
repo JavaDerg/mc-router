@@ -1,4 +1,5 @@
 mod manager;
+mod prot;
 mod proxy;
 
 use bytes::BufMut;
@@ -34,8 +35,8 @@ async fn main() {
 		}
 	};
 
-	let manager = Arc::new(manager::Manager::new());
-	let _ = proxy::mk_listener(manager.clone(), "0.0.0.0:25565".parse().unwrap()).await;
+	let manager = &*Box::leak(Box::new(manager::Manager::new()));
+	let _ = proxy::mk_listener(manager, "0.0.0.0:25565".parse().unwrap()).await;
 
 	loop {
 		let (socket, addr) = match listener.accept().await {
