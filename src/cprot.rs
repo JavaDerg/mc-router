@@ -1,7 +1,10 @@
+use std::net::SocketAddr;
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub enum Request {
 	Echo,
 	List,
+	MakeListener(SocketAddr),
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -14,4 +17,5 @@ pub enum Response {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum ErrKind {
 	InvalidPacket,
+	IoError(String),
 }

@@ -21,7 +21,7 @@ impl Manager {
 		&'static self,
 		local: SocketAddr,
 		peer: SocketAddr,
-		mut stream: tokio::net::TcpStream,
+		stream: tokio::net::TcpStream,
 	) {
 		let _handler = tokio::spawn(async move {
 			let host = match crate::prot::seek_handshake(&stream).await {
@@ -38,7 +38,8 @@ impl Manager {
 			let target = self.get_socket_addr(&host).await;
 			match target {
 				Some(target) => {
-					tokio::spawn(crate::proxy::route(stream, target));
+					let connection = crate::proxy::route(stream, peer, target).await;
+					// Todo register connection
 				}
 				None => warn!(
 					"Unknown target; Target={}:{}; Peer={}; Local={}; State=Disconnecting",

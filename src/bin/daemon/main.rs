@@ -2,12 +2,14 @@ mod manager;
 mod prot;
 mod proxy;
 
+use crate::manager::Manager;
+use crate::proxy::Listener;
 use bytes::BufMut;
 use futures::StreamExt;
+use mc_router::cprot::Request;
 use mc_router::{cprot, SOCKET_PATH};
-use std::net::{IpAddr, SocketAddr};
+use std::io::Error;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::WriteHalf;
 use tokio::net::UnixStream;
@@ -36,7 +38,6 @@ async fn main() {
 	};
 
 	let manager = &*Box::leak(Box::new(manager::Manager::new()));
-	let _ = proxy::mk_listener(manager, "0.0.0.0:25565".parse().unwrap()).await;
 
 	loop {
 		let (socket, addr) = match listener.accept().await {
@@ -47,11 +48,11 @@ async fn main() {
 			}
 		};
 		tracing::info!("New control connection; Addr={:?}", addr);
-		tokio::spawn(handle_controller(socket));
+		tokio::spawn(handle_controller(socket, manager));
 	}
 }
 
-async fn handle_controller(mut stream: UnixStream) {
+async fn handle_controller(mut stream: UnixStream, manager: &'static Manager) {
 	let (read, mut write) = stream.split();
 	let mut framed = FramedRead::new(read, LinesCodec::new_with_max_length(8192));
 	while let Some(line) = framed.next().await {
@@ -83,7 +84,7 @@ async fn handle_controller(mut stream: UnixStream) {
 			}
 		};
 		tracing::info!("Received Packet; Parsed={:?}", ron);
-		if let Err(err) = write_res(&mut write, process_packet(ron).await).await {
+		if let Err(err) = write_res(&mut write, process_packet(ron, manager).await).await {
 			tracing::error!(
 				"Unable to write response; State=Closing connection; Error={}",
 				err
@@ -93,22 +94,29 @@ async fn handle_controller(mut stream: UnixStream) {
 	}
 }
 
-async fn process_packet(packet: cprot::Request) -> cprot::Response {
+async fn process_packet(packet: cprot::Request, manager: &'static Manager) -> cprot::Response {
 	match packet {
 		cprot::Request::Echo => cprot::Response::Echo,
-		_ => cprot::Response::Nil,
+		cprot::Request::MakeListener(socket) => {
+			match proxy::mk_listener(manager, socket).await {
+				Ok(listener) => {
+					// TODO: Register in manager
+					todo!()
+				}
+				Err(err) => cprot::Response::Error(
+					cprot::ErrKind::IoError(format!("{}", err)),
+					format!("Unable to listen on '{:?}'", socket),
+				),
+			}
+		}
+		Request::List => {
+			todo!()
+		}
 	}
 }
 
 async fn write_res(wh: &mut WriteHalf<'_>, res: cprot::Response) -> tokio::io::Result<()> {
-	let ron = ron::to_string(&res)
-		.expect("If you can read this, email <post-rex@pm.me> about hot glue + stacktrace");
-	let ron = ron.as_bytes();
-
-	let mut buf = bytes::BytesMut::with_capacity(ron.len() + 1);
-	buf.put_slice(ron);
-	buf.put_u8(b'\n');
-	let buf = buf.freeze();
-
-	wh.write_all(buf.as_ref()).await
+	wh.write_all(ron::to_string(&res).unwrap().as_bytes()).await?;
+	wh.write_all(b"\n").await?;
+	wh.flush().await
 }
