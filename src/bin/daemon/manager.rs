@@ -1,9 +1,12 @@
 use crate::prot::Host;
 use crate::proxy::ConnInfo;
+use evmap::ShallowCopy;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::mem::ManuallyDrop;
 use std::net::SocketAddr;
 use std::sync::Weak;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 
 #[derive(Default)]
@@ -39,7 +42,7 @@ impl Manager {
 			match target {
 				Some(target) => {
 					let connection = crate::proxy::route(stream, peer, target).await;
-					// Todo register connection
+					self.register(host, connection).await;
 				}
 				None => warn!(
 					"Unknown target; Target={}:{}; Peer={}; Local={}; State=Disconnecting",
@@ -47,6 +50,15 @@ impl Manager {
 				),
 			}
 		});
+	}
+
+	pub async fn register(&self, target: Host, conn: Weak<ConnInfo>) {
+		self.connections
+			.write()
+			.await
+			.entry(target)
+			.or_default()
+			.push(conn);
 	}
 
 	pub async fn get_socket_addr(&self, host: &crate::prot::Host) -> Option<SocketAddr> {

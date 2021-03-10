@@ -3,7 +3,7 @@ use itertools::Itertools;
 use tokio::io::{Error, ErrorKind};
 use tokio::net::TcpStream;
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub struct Host {
 	pub domain: String,
 	pub port: u16,
