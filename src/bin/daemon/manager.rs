@@ -1,8 +1,8 @@
-use crate::prot::Host;
 use crate::proxy::{ConnInfo, Listener};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Weak;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -13,11 +13,56 @@ pub struct Manager {
 	connections: RwLock<HashMap<String, Vec<Weak<ConnInfo>>>>,
 	listener: RwLock<HashMap<SocketAddr, Listener>>,
 	cached_players: RwLock<HashMap<String, Vec<Weak<ConnInfo>>>>,
+	con_count: AtomicUsize,
+	cleaner_running: AtomicBool,
 }
 
 impl Manager {
 	pub fn new() -> Self {
 		Self::default()
+	}
+
+	pub fn start_cleaner(&'static self) {
+		if self.cleaner_running.load(Ordering::Acquire) {
+			panic!("Cleaner started twice");
+		}
+		tokio::spawn(async move {
+			loop {
+				tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+				let cc = self.con_count.swap(0, Ordering::AcqRel);
+				if cc == 0 {
+					continue;
+				}
+				info!("Cleaning closed connections from {} total connections", cc);
+				self.clean_cache().await;
+			}
+		});
+	}
+
+	async fn clean_cache(&self) {
+		let mut cc = self.connections.write().await;
+		for vec in cc.values_mut() {
+			Manager::clean_vec(vec);
+		}
+		drop(cc);
+		let mut cc = self.cached_players.write().await;
+		for vec in cc.values_mut() {
+			Manager::clean_vec(vec);
+		}
+		drop(cc);
+	}
+
+	fn clean_vec(vec: &mut Vec<Weak<ConnInfo>>) {
+		let indexes = vec
+			.iter()
+			.zip(0..)
+			.filter(|(conn, _)| conn.strong_count() == 0)
+			.map(|(_, index)| index)
+			.collect_vec();
+		for (index, offset) in indexes.iter().zip(0..) {
+			let index = *index - offset;
+			vec.remove(index);
+		}
 	}
 
 	pub async fn new_client(
@@ -50,6 +95,7 @@ impl Manager {
 				),
 			}
 		});
+		self.con_count.fetch_add(1, Ordering::AcqRel);
 	}
 
 	pub async fn register_client(&self, target: String, conn: Weak<ConnInfo>) {

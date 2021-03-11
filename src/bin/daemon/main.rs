@@ -36,6 +36,7 @@ async fn main() {
 	};
 
 	let manager = &*Box::leak(Box::new(manager::Manager::new()));
+	manager.start_cleaner();
 
 	loop {
 		let (socket, addr) = match listener.accept().await {

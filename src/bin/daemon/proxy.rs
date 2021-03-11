@@ -17,6 +17,9 @@ async fn loopback(mut read: OwnedReadHalf, mut write: OwnedWriteHalf) -> tokio::
 	let mut buffer = [0u8; 2048];
 	loop {
 		let read = read.read(&mut buffer[..]).await?;
+		if read == 0 {
+			return Ok(());
+		}
 		write.write_all(&buffer[..read]).await?;
 	}
 }
