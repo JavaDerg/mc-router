@@ -5,12 +5,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinHandle;
 
-pub struct Listener(tokio::task::JoinHandle<()>);
+pub struct Listener(pub tokio::task::JoinHandle<()>);
 
 pub struct ConnInfo {
-	peer: SocketAddr,
-	target: SocketAddr,
-	handler: JoinHandle<()>,
+	pub peer: SocketAddr,
+	pub target: SocketAddr,
+	pub handler: JoinHandle<()>,
 }
 
 async fn loopback(mut read: OwnedReadHalf, mut write: OwnedWriteHalf) -> tokio::io::Result<()> {

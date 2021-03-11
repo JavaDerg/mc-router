@@ -44,14 +44,6 @@ impl<'a> PeekCursor<'a> {
 		}
 		Err(Error::from(ErrorKind::InvalidData))
 	}
-
-	pub fn set_pos(&mut self, pos: usize) {
-		self.pos = pos;
-	}
-
-	pub fn get_pos(&self) -> usize {
-		self.pos
-	}
 }
 
 pub async fn seek_handshake(stream: &TcpStream) -> tokio::io::Result<Host> {

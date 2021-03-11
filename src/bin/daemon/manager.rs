@@ -1,18 +1,18 @@
 use crate::prot::Host;
-use crate::proxy::ConnInfo;
-use evmap::ShallowCopy;
+use crate::proxy::{ConnInfo, Listener};
+use itertools::Itertools;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::mem::ManuallyDrop;
 use std::net::SocketAddr;
 use std::sync::Weak;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 #[derive(Default)]
 pub struct Manager {
-	dict: RwLock<HashMap<Host, SocketAddr>>,
-	connections: RwLock<HashMap<Host, Vec<Weak<ConnInfo>>>>,
+	dict: RwLock<HashMap<String, SocketAddr>>,
+	connections: RwLock<HashMap<String, Vec<Weak<ConnInfo>>>>,
+	listener: RwLock<HashMap<SocketAddr, Listener>>,
+	cached_players: RwLock<HashMap<String, Vec<Weak<ConnInfo>>>>,
 }
 
 impl Manager {
@@ -38,11 +38,11 @@ impl Manager {
 				"New Connection; Local={}; Peer={}; Target={{ Host={}; Port={} }}",
 				&local, &peer, &host.domain, &host.port
 			);
-			let target = self.get_socket_addr(&host).await;
+			let target = self.get_socket_addr(&host.domain).await;
 			match target {
 				Some(target) => {
 					let connection = crate::proxy::route(stream, peer, target).await;
-					self.register(host, connection).await;
+					self.register_client(host.domain, connection).await;
 				}
 				None => warn!(
 					"Unknown target; Target={}:{}; Peer={}; Local={}; State=Disconnecting",
@@ -52,7 +52,7 @@ impl Manager {
 		});
 	}
 
-	pub async fn register(&self, target: Host, conn: Weak<ConnInfo>) {
+	pub async fn register_client(&self, target: String, conn: Weak<ConnInfo>) {
 		self.connections
 			.write()
 			.await
@@ -61,7 +61,94 @@ impl Manager {
 			.push(conn);
 	}
 
-	pub async fn get_socket_addr(&self, host: &crate::prot::Host) -> Option<SocketAddr> {
+	pub async fn register_listener(&self, addr: SocketAddr, listener: Listener) {
+		if let Some(old_listener) = self.listener.write().await.insert(addr, listener) {
+			warn!(
+				"Stopping old listener in favour of new one (this shouldn't be possible); Local={}",
+				addr
+			);
+			old_listener.0.abort();
+		}
+	}
+
+	pub async fn kill_delete_listener(&self, addr: SocketAddr) -> bool {
+		if let Some(listener) = self.listener.write().await.remove(&addr) {
+			listener.0.abort();
+			true
+		} else {
+			false
+		}
+	}
+
+	pub async fn get_listeners(&self) -> Vec<SocketAddr> {
+		self.listener.read().await.keys().copied().collect_vec()
+	}
+
+	pub async fn set_mapping(&self, domain: String, socket: SocketAddr) -> Option<SocketAddr> {
+		self.dict.write().await.insert(domain, socket)
+	}
+
+	pub async fn get_mapping(&self, domain: &str) -> Option<SocketAddr> {
+		self.dict.read().await.get(domain).cloned()
+	}
+
+	pub async fn del_mapping(&self, domain: &str, dc_players: bool) -> usize {
+		let rm_map = self.dict.write().await.remove(domain);
+		if let Some(conns) = self.connections.write().await.remove(domain) {
+			if dc_players {
+				#[allow(clippy::suspicious_map)]
+				return conns
+					.into_iter()
+					.map(|conn| conn.upgrade())
+					.filter(|conn| conn.is_some())
+					.map(|conn| conn.unwrap().handler.abort())
+					.count() as usize + 1;
+			} else {
+				let mut vec = conns
+					.into_iter()
+					.filter(|conn| conn.strong_count() > 0)
+					.collect_vec();
+				let mut cap = self.cached_players.write().await;
+				cap.entry(domain.to_string()).or_default().append(&mut vec);
+			}
+		}
+		match rm_map.is_some() {
+			true => 1,
+			false => 0,
+		}
+	}
+
+	pub async fn list_connections(&self) -> Vec<(SocketAddr, String)> {
+		let mut vec = vec![];
+		let ci = self.connections.read().await;
+		let cpi = self.cached_players.read().await;
+		for mut sub_vec in ci
+			.iter()
+			.chain(cpi.iter())
+			.map(|(domain, conns)| (domain.clone(), conns.clone()))
+			.map(|(domain, conns)| {
+				conns
+					.into_iter()
+					.map(|conn| conn.upgrade())
+					.filter(|conn| conn.is_some())
+					.map(|conn| (conn.unwrap().peer, domain.clone()))
+					.collect_vec()
+			}) {
+			vec.append(&mut sub_vec);
+		}
+		vec
+	}
+
+	pub async fn list_mappings(&self) -> Vec<(String, SocketAddr)> {
+		self.dict
+			.read()
+			.await
+			.iter()
+			.map(|(domain, addr)| (domain.clone(), *addr))
+			.collect_vec()
+	}
+
+	pub async fn get_socket_addr(&self, host: &String) -> Option<SocketAddr> {
 		self.dict.read().await.get(host).cloned()
 	}
 }

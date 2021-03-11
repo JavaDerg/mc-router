@@ -3,12 +3,10 @@ mod prot;
 mod proxy;
 
 use crate::manager::Manager;
-use crate::proxy::Listener;
-use bytes::BufMut;
 use futures::StreamExt;
-use mc_router::cprot::Request;
+use itertools::Itertools;
+use mc_router::cprot::{ErrKind, Request, Response};
 use mc_router::{cprot, SOCKET_PATH};
-use std::io::Error;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::WriteHalf;
@@ -21,7 +19,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() {
 	tracing_subscriber::fmt()
-		.with_max_level(tracing::Level::TRACE)
+		.with_max_level(tracing::Level::INFO)
 		.init();
 
 	let socket = Path::new(SOCKET_PATH);
@@ -64,6 +62,9 @@ async fn handle_controller(mut stream: UnixStream, manager: &'static Manager) {
 				return;
 			}
 		};
+		if line.is_empty() {
+			continue;
+		}
 		let ron: cprot::Request = match ron::from_str(&line) {
 			Ok(obj) => obj,
 			Err(err) => {
@@ -80,7 +81,7 @@ async fn handle_controller(mut stream: UnixStream, manager: &'static Manager) {
 					),
 				)
 				.await;
-				return;
+				continue;
 			}
 		};
 		tracing::info!("Received Packet; Parsed={:?}", ron);
@@ -97,21 +98,60 @@ async fn handle_controller(mut stream: UnixStream, manager: &'static Manager) {
 async fn process_packet(packet: cprot::Request, manager: &'static Manager) -> cprot::Response {
 	match packet {
 		cprot::Request::Echo => cprot::Response::Echo,
-		cprot::Request::MakeListener(socket) => {
-			match proxy::mk_listener(manager, socket).await {
-				Ok(listener) => {
-					// TODO: Register in manager
-					todo!()
-				}
-				Err(err) => cprot::Response::Error(
-					cprot::ErrKind::IoError(format!("{}", err)),
-					format!("Unable to listen on '{:?}'", socket),
-				),
+		cprot::Request::MkListener(socket) => match proxy::mk_listener(manager, socket).await {
+			Ok(listener) => {
+				manager.register_listener(socket, listener).await;
+				cprot::Response::Ok(format!("Created new listener {}", socket))
 			}
-		}
-		Request::List => {
-			todo!()
-		}
+			Err(err) => cprot::Response::Error(
+				cprot::ErrKind::IoError(format!("{}", err)),
+				format!("Unable to listen on '{:?}'", socket),
+			),
+		},
+		Request::RmListener(socket) => match manager.kill_delete_listener(socket).await {
+			true => Response::Ok(format!("Listener {} closed", socket)),
+			false => Response::Error(ErrKind::NotFound, format!("Listener {} does not exist", socket)),
+		},
+		Request::LsListeners => Response::List(
+			manager
+				.get_listeners()
+				.await
+				.into_iter()
+				.map(|addr| addr.to_string())
+				.collect_vec(),
+		),
+		Request::SetMapping(domain, socket) => match manager.set_mapping(domain.clone(), socket).await {
+			Some(old) => Response::Ok(format!("Set {} to {}, replaced {}", &domain, socket, old)),
+			None => Response::Ok(format!("Set {} to {}", &domain, socket)),
+		},
+		Request::GetMapping(domain) => match manager.get_mapping(&domain).await {
+			Some(addr) => Response::Ok(format!("{} => {}", &domain, addr)),
+			None => Response::Error(ErrKind::NotFound, format!("Unable to find {}", &domain)),
+		},
+		Request::RmMapping(domain, rm_clients) => match manager.del_mapping(&domain, rm_clients).await {
+			0 => Response::Error(ErrKind::NotFound, format!("Unable to find {}", &domain)),
+			x => Response::Ok(format!(
+				"Deleted mapping for {}; Disconnected {} players",
+				&domain,
+				x - 1
+			)),
+		},
+		Request::LsMappings => Response::List(
+			manager
+				.list_mappings()
+				.await
+				.into_iter()
+				.map(|(domain, addr)| format!("{} => {}", domain, addr))
+				.collect_vec(),
+		),
+		Request::LsConns => Response::List(
+			manager
+				.list_connections()
+				.await
+				.into_iter()
+				.map(|(addr, domain)| format!("{} => {}", addr, domain))
+				.collect_vec(),
+		),
 	}
 }
 
