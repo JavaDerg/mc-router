@@ -25,9 +25,9 @@ async fn main() {
 		.with_env_filter(EnvFilter::from_default_env())
 		.init();
 
-	let interface = std::env::var("MC_INTERFACE").unwrap_or("0.0.0.0:25565".to_string());
+	let interface = std::env::var("MCR_INTERFACE").unwrap_or("0.0.0.0:25565".to_string());
 
-	let config_path = std::env::var("MC_CONFIG").unwrap_or("mcr.json".to_string());
+	let config_path = std::env::var("MCR_CONFIG").unwrap_or("mcr.json".to_string());
 	let config = Config::new(config_path).await;
 	if let Err(err) = &config {
 		error!("Failed to load config: {:?}", err);
