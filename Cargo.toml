@@ -1,22 +1,18 @@
 [package]
 name = "mc-router"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["post-rex <post-rex@pm.me>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-bytes = "1"
-mimalloc = { version = "0.1", default-features = false }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "signal", "macros", "io-util", "fs", "sync", "time"] }
-tokio-util = { version = "0.6", features = ["codec"] }
-ron = "0.6"
-serde = { version = "1.0", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.2"
-futures = "0.3"
-flume = "0.10"
-itertools = "0.10"
-
-[[bin]]
-name = "mcpd"
-path = "src/bin/daemon/main.rs"
+bytes = "1.1.0"
+dashmap = "5.2.0"
+mimalloc = { version = "0.1.28", default-features = false }
+notify = "4.0.17"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+thiserror = "1.0.30"
+tokio = { version = "1.17.0", features = ["tracing", "macros", "rt-multi-thread", "net", "io-util", "fs"] }
+tracing = "0.1.33"
+tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+protocol = { git = "https://github.com/post-rex/mcsrs.git" }
