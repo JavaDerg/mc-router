@@ -1,0 +1,6 @@
+{
+  "example.com": "localhost:25566",
+  "private.example.com": "localhost:25567",
+  "awesome.org": "localhost:25568",
+  "kernel.org": "localhost:25569"
+}

@@ -1,6 +1,5 @@
 mod config;
 
-use std::collections::HashMap;
 use crate::config::{watcher, Config};
 use bytes::BytesMut;
 use mimalloc::MiMalloc;
